@@ -1,0 +1,42 @@
+<?php
+
+function collect_components($input_file) {
+  $fh = fopen($input_file, "r");
+  if (!$fh) {
+    echo "File error", PHP_EOL;
+    exit(0);
+  }
+
+  $components = [];
+  while (($line = fgets($fh)) !== false) {
+    $components[] = explode('/', trim($line));
+  }
+  fclose($fh);
+
+  return $components;
+}
+
+function build_bridge($components, $base) {
+  $possible_routes = [];
+  foreach ($components as $index => $value) {
+    if (!in_array($base, $value)) {
+      continue;
+    }
+
+    $current = [$value];
+    array_splice($components, $index, 1);
+
+    $myindex = array_search($base, $value);
+    $target_value = $value[1 - $myindex];
+
+    $current[] = build_bridge($components, $target_value);
+
+    $possible_routes[] = $current;
+  }
+
+  return $possible_routes;
+}
+
+$components = collect_components($argv[1]);
+
+$clusterfuck = build_bridge($components, 0);
