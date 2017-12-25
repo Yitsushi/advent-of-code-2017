@@ -1,16 +1,24 @@
 package main
 
 import (
+  "bufio"
   "fmt"
+  "os"
+  "strings"
 )
-
 
 type State func(byte)(byte, int, string)
 
-func CreateState(wOnZero byte, mOnZero int, nOnZero string, wOnOne byte, mOnOne int, nOnOne string) State {
+type StateDescriptor struct {
+  Write byte
+  Move int
+  Next string
+}
+
+func NewState(zero *StateDescriptor, one *StateDescriptor) State {
   return func(current byte) (byte, int, string) {
-    if (current == 0) { return wOnZero, mOnZero, nOnZero }
-    return wOnOne, mOnOne, nOnOne
+    if (current == 0) { return zero.Write, zero.Move, zero.Next }
+    return one.Write, one.Move, one.Next
   }
 }
 
@@ -30,14 +38,6 @@ func NewTuringMachine() *TuringMachine {
   machine.Memory = make([]byte, 1)
   machine.Pointer = 0
   machine.States = map[string]State{}
-  machine.NextState = "A"
-
-  machine.AddState("A", CreateState(1, 1, "B", 0, -1, "E"))
-  machine.AddState("B", CreateState(1, -1, "C", 0, 1, "A"))
-  machine.AddState("C", CreateState(1, -1, "D", 0, 1, "C"))
-  machine.AddState("D", CreateState(1, -1, "E", 0, -1, "F"))
-  machine.AddState("E", CreateState(1, -1, "A", 1, -1, "C"))
-  machine.AddState("F", CreateState(1, -1, "E", 1, 1, "A"))
 
   return machine
 }
@@ -69,11 +69,101 @@ func (tm *TuringMachine) Checksum() int {
   return counter
 }
 
-func main() {
-  machine := NewTuringMachine()
-  for i := 0; i < 12208951; i++ {
-    machine.Step()
+func Readln(r *bufio.Reader) (string, error) {
+  var (
+    isPrefix bool  = true
+    err      error = nil
+    line, ln []byte
+  )
+  for isPrefix && err == nil {
+    line, isPrefix, err = r.ReadLine()
+    ln = append(ln, line...)
+  }
+  return string(ln), err
+}
+
+func LoadInstructions(machine *TuringMachine) (stepCount int) {
+  args := os.Args[1:]
+
+  if len(args) < 1 {
+    fmt.Printf("First argument must be a file.")
+    os.Exit(1)
   }
 
+  file, err := os.Open(args[0])
+  if err != nil {
+    fmt.Printf("%s\n", err)
+    os.Exit(1)
+  }
+
+  defer file.Close()
+
+  var currentBranch int
+  var activeStateName string
+  states := make([]*StateDescriptor, 2, 2)
+  states[0] = &StateDescriptor{}
+  states[1] = &StateDescriptor{}
+
+  r := bufio.NewReader(file)
+  for s, e := Readln(r); e == nil; s, e = Readln(r) {
+    if strings.HasPrefix(s, "Begin") {
+      fmt.Sscanf(s, "Begin in state %1s.", &machine.NextState)
+      continue
+    }
+
+    if strings.HasPrefix(s, "Perform") {
+      fmt.Sscanf(s, "Perform a diagnostic checksum after %d steps.", &stepCount)
+      continue
+    }
+
+    if s == "" && activeStateName != "" {
+      machine.AddState(
+        activeStateName,
+        NewState(states[0], states[1]),
+      )
+      activeStateName = ""
+      states[0] = &StateDescriptor{}
+      states[1] = &StateDescriptor{}
+    }
+
+    if strings.HasPrefix(s, "In state") {
+      fmt.Sscanf(s, "In state %1s:", &activeStateName)
+    } else if strings.HasPrefix(s, "  If the current") {
+      fmt.Sscanf(s, "  If the current value is %d:", &currentBranch)
+    } else if strings.HasPrefix(s, "    - Write the") {
+      fmt.Sscanf(s, "    - Write the value %d.", states[currentBranch].Write)
+    } else if strings.HasPrefix(s, "    - Move one slot to") {
+      var direction string
+      fmt.Sscanf(s, "    - Move one slot to the %s", &direction)
+      if (direction == "left.") {
+        states[currentBranch].Move = -1
+      } else {
+        states[currentBranch].Move = 1
+      }
+    } else if strings.HasPrefix(s, "    - Continue with state") {
+      var n string
+      fmt.Sscanf(s, "   - Continue with state %1s.", &n)
+      states[currentBranch].Next = n
+    }
+  }
+
+  if activeStateName != "" {
+      machine.AddState(
+        activeStateName,
+        NewState(states[0], states[1]),
+      )
+  }
+
+  return stepCount
+}
+
+func main() {
+  machine := NewTuringMachine()
+  stepCount := LoadInstructions(machine)
+  fmt.Println(stepCount)
+  for i := 0; i < stepCount; i++ {
+    fmt.Printf("%.2f%%\r", float64(i)/float64(stepCount) * 100)
+    machine.Step()
+  }
   fmt.Printf("Checksum: %d\n", machine.Checksum())
 }
